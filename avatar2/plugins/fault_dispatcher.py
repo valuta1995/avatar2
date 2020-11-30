@@ -5,44 +5,6 @@ from avatar2 import Avatar, BreakpointHitMessage, Target
 
 VECTOR_TABLE_SIZE = 256
 
-ODIN_STUB = (".thumb\n"
-             "OdinAllFaulter:\n"
-             "NOP\n"
-             "NOP\n"
-             "NOP\n"
-             "NOP\n"  # Jump to old handler
-             "LDR     R3, =0x%X\n"  # Inject old VTable address here
-             "LDR     R3, [R3, #%d]\n"  # Offset of the table entry 
-             "BX      R3\n"
-             "NOP\n"
-             "NOP\n"
-             "NOP\n"
-             "NOP\n"  # Disable MPU
-             "PUSH    {r7, lr}\n"
-             "ADD     r7, sp, #0\n"
-             "DMB     sy\n"
-             "LDR     R3, =0x%X\n"  # MPU addr
-             "MOVS    R2, #0\n"
-             "STR     R2, [R2, #4]\n"
-             "POP     {r7, pc}\n"
-             "NOP\n"
-             "NOP\n"
-             "NOP\n"
-             "NOP\n"  # Enable MPU
-             "PUSH    {r7, lr}\n"
-             "LDR     R3, =0x%X\n"  # MPU addr
-             "MOVS    R2, #5\n"
-             "STR     R2, [R3, #4]\n"
-             "DSB     sy\n"
-             "ISB     sy\n"
-             "POP     {r7, pc}\n"
-             "NOP\n"
-             "NOP\n"
-             "NOP\n"
-             "NOP\n")
-ODIN_STUB_SIZE = 80
-
-
 def mem_copy(target: Target, src: int, dst: int, word_size: int, num_words: int):
     print("Copying %d (0x%X) bytes\n\tfrom 0x%X ~ 0x%X\n\tto 0x%X ~ 0x%X" % (
         num_words * word_size,
@@ -93,6 +55,7 @@ class FaultDispatcher:
     next_free: int
     assembly: str
     assembly_bytes: int
+    assembly_offset: int
 
     substitute_vt_addr: int
     substitute_handler_addr: int
@@ -120,7 +83,7 @@ class FaultDispatcher:
         self.original_vt_addr = 0
 
     def external_init(self, mpu_address: int, vtor_address: int, next_free_memory_addr: int, assembly: str,
-                      assembly_bytes: int):
+                      assembly_bytes: int, assembly_offset: int):
         self.initialized = True
         self.mpu_address = mpu_address
         self.vtor_address = vtor_address
@@ -129,6 +92,7 @@ class FaultDispatcher:
         self.watchman = avatar.watchmen.add_watchman('BreakpointHit', when='before', callback=self.vtor_changed)
         self.assembly = assembly
         self.assembly_bytes = assembly_bytes
+        self.assembly_offset = assembly_offset
 
         self.next_free = next_free_memory_addr
         print("Next free is at: 0x%X" % self.next_free)
@@ -193,7 +157,7 @@ class FaultDispatcher:
         self.vtor_ready = True
         for irq_offset in self.post_vtor_execute_queue:
             print("Executing delayed listen for iqr 0x%X." % irq_offset)
-            self.listen_for_irq(irq_offset)
+            self._actually_listen_for_irq(irq_offset)
 
     def _default_fallback_callback(self):
         print(self.vtor_watch_id)
@@ -203,33 +167,37 @@ class FaultDispatcher:
         if not self.initialized:
             raise Exception("Fault dispatcher needs to be initialized before use.")
 
+        if irq_vt_offset in self.registered_irqs:
+            raise Exception("IRQ 0x%X is already registered" % irq_vt_offset)
+
+        # Mark the registration as active to prevent double registers later even if not vtor_ready
+        self.registered_irqs[irq_vt_offset] = list()
+
         if not self.vtor_ready:
             print("Delaying 0x%X until post vtor-setup." % irq_vt_offset)
             self.post_vtor_execute_queue.append(irq_vt_offset)
             return
 
-        if irq_vt_offset in self.registered_irqs:
-            raise Exception("IRQ 0x%X is already registered" % irq_vt_offset)
+        self._actually_listen_for_irq(irq_vt_offset)
 
-        self.registered_irqs[irq_vt_offset] = list()
-
+    def _actually_listen_for_irq(self, irq_vt_offset):
         original_vt_entry = self.original_vt_addr + irq_vt_offset
         original_handler_addr = self._target.read_memory(original_vt_entry, 4)
-
         new_handler_addr = self.allocate(self.assembly_bytes)
         substitute_vt_entry = self.substitute_vt_addr + irq_vt_offset
         # TODO why does +1/+3 work (with wrong thumb-ness) but +0/+2 break completely
         self._target.write_memory(substitute_vt_entry, 4, new_handler_addr + 1)
         print("New handler at 0x%X registered to 0x%X" % (new_handler_addr, substitute_vt_entry))
         # self._target.set_breakpoint(original_handler_addr)
-        breakpoint_number = self._target.set_breakpoint(new_handler_addr)
+        # breakpoint_number = self._target.set_breakpoint(new_handler_addr)
+        breakpoint_number = self._target.set_breakpoint(new_handler_addr + self.assembly_offset)
         self.registered_breakpoints[breakpoint_number] = irq_vt_offset
-        self._target.log.info("Set breakpoints on old 0x%X and new 0x%X" % (original_handler_addr, new_handler_addr))
+        self._target.log.info("Set breakpoints 0x%X" % (new_handler_addr + self.assembly_offset))
         self.assemble_handler(new_handler_addr, irq_vt_offset)
         print("Injected new handler for 0x%X" % irq_vt_offset)
 
     def assemble_handler(self, handler_addr: int, handler_offset: int):
-        asm_string = ODIN_STUB % (
+        asm_string = self.assembly % (
             self.original_vt_addr,
             handler_offset,
             self.mpu_address,
@@ -280,7 +248,7 @@ class FaultDispatcher:
         if irq_vector not in self.registered_irqs:
             raise Exception("Listening for 0x%X callbacks is not enabled" % irq_vector)
         self.registered_irqs[irq_vector].append(callback)
-    
+
 
 def on_breakpoint_hit(avatar: Avatar, message: BreakpointHitMessage) -> None:
     target: Target = message.origin
