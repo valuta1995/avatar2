@@ -1,6 +1,6 @@
 from typing import List
 
-from avatar2 import Avatar, Target, ARM_CORTEX_M3 as CxM3
+from avatar2 import Avatar, Target, ARM_CORTEX_M3 as CM3
 
 NUM_SYS_INTERRUPTS = 16
 
@@ -79,21 +79,21 @@ class CortexM3DumpTool:
 
     def dump_nvic_info(self):
         target = self._target
-        ictr_value = CxM3.ICTR.read(target)
+        ictr_value = CM3.ICTR.read(target)
         # 16 internal (system) interrupts and an increment of 32 external interrupts
         max_vt_entries = NUM_SYS_INTERRUPTS + 32 * (1 + ictr_value)
         target.log.info("Maximum number of interrupts = %d (0x%X)" % (max_vt_entries, max_vt_entries))
 
-        prio_group_number = CxM3.AIRCR.read_pri_group(target)
+        prio_group_number = CM3.AIRCR.read_pri_group(target)
         target.log.info("The preemption-subriority split is set to %d" % prio_group_number)
 
-        vt_address = CxM3.VTOR.read(target)
+        vt_address = CM3.VTOR.read(target)
         vt_entries: List[int] = target.read_memory(vt_address, 4, max_vt_entries)
         if type(vt_entries) is not list:
             raise Exception("Failed to correctly read vector table")
 
-        shcsr_value = CxM3.SHCSR.read(target)
-        icsr_value = CxM3.ICSR.read(target)
+        shcsr_value = CM3.SHCSR.read(target)
+        icsr_value = CM3.ICSR.read(target)
 
         interrupts = list()
         for i in range(max_vt_entries):
@@ -111,10 +111,10 @@ class CortexM3DumpTool:
 
     def parse_external_interrupt(self, index, interrupt):
         interrupt.name = "Interrupt %04d" % index
-        interrupt.enabled = CxM3.ExtIntSETENRegs.read_bit_n(self._target, index)
-        interrupt.pended = CxM3.ExtIntSETPENDRegs.read_bit_n(self._target, index)
-        interrupt.active = CxM3.ExtIntACTIVERegs.read_bit_n(self._target, index)
-        interrupt.priority = CxM3.ExtIntPRIORegs.read_field_n(self._target, index)
+        interrupt.enabled = CM3.ExtIntSETENRegs.read_bit_n(self._target, index)
+        interrupt.pended = CM3.ExtIntSETPENDRegs.read_bit_n(self._target, index)
+        interrupt.active = CM3.ExtIntACTIVERegs.read_bit_n(self._target, index)
+        interrupt.priority = CM3.ExtIntPRIORegs.read_field_n(self._target, index)
         return interrupt
 
     def parse_system_interrupt(self, index: int, interrupt: Interrupt, icsr_value: int, shcsr_value: int):
@@ -127,48 +127,48 @@ class CortexM3DumpTool:
 
         elif index in [1, 2, 3]:
             interrupt.enabled = True
-            interrupt.active = index == (CxM3.ICSR.MASK_VECT_ACTIVE & icsr_value)
-            interrupt.pended = (index == 2 and (CxM3.ICSR.MASK_NMI_PEND_SET & icsr_value))
+            interrupt.active = index == (CM3.ICSR.MASK_VECT_ACTIVE & icsr_value)
+            interrupt.pended = (index == 2 and (CM3.ICSR.MASK_NMI_PEND_SET & icsr_value))
             interrupt.priority = index - 4
 
         else:
             # Field 0 of the SEPLR is the MMF (id 4)
-            interrupt.priority = CxM3.SEPLR.read_field_n(self._target, index - 4)
+            interrupt.priority = CM3.SEPLR.read_field_n(self._target, index - 4)
 
             if index == 4:
-                interrupt.enabled = shcsr_value & CxM3.SHCSR.MASK_MEM_FAULT_ENA != 0
-                interrupt.pended = shcsr_value & CxM3.SHCSR.MASK_MEM_FAULT_PENDING != 0
-                interrupt.active = shcsr_value & CxM3.SHCSR.MASK_MEM_FAULT_ACTIVE != 0
+                interrupt.enabled = shcsr_value & CM3.SHCSR.MASK_MEM_FAULT_ENA != 0
+                interrupt.pended = shcsr_value & CM3.SHCSR.MASK_MEM_FAULT_PENDING != 0
+                interrupt.active = shcsr_value & CM3.SHCSR.MASK_MEM_FAULT_ACTIVE != 0
 
             elif index == 5:
-                interrupt.enabled = shcsr_value & CxM3.SHCSR.MASK_BUS_FAULT_ENA != 0
-                interrupt.pended = shcsr_value & CxM3.SHCSR.MASK_BUS_FAULT_PENDING != 0
-                interrupt.active = shcsr_value & CxM3.SHCSR.MASK_BUS_FAULT_ACTIVE != 0
+                interrupt.enabled = shcsr_value & CM3.SHCSR.MASK_BUS_FAULT_ENA != 0
+                interrupt.pended = shcsr_value & CM3.SHCSR.MASK_BUS_FAULT_PENDING != 0
+                interrupt.active = shcsr_value & CM3.SHCSR.MASK_BUS_FAULT_ACTIVE != 0
 
             elif index == 6:
-                interrupt.enabled = shcsr_value & CxM3.SHCSR.MASK_USAGE_FAULT_ENA != 0
-                interrupt.pended = shcsr_value & CxM3.SHCSR.MASK_USAGE_FAULT_PENDING != 0
-                interrupt.active = shcsr_value & CxM3.SHCSR.MASK_USAGE_FAULT_ACTIVE != 0
+                interrupt.enabled = shcsr_value & CM3.SHCSR.MASK_USAGE_FAULT_ENA != 0
+                interrupt.pended = shcsr_value & CM3.SHCSR.MASK_USAGE_FAULT_PENDING != 0
+                interrupt.active = shcsr_value & CM3.SHCSR.MASK_USAGE_FAULT_ACTIVE != 0
 
             elif index == 11:
                 interrupt.enabled = True
-                interrupt.pended = shcsr_value & CxM3.SHCSR.MASK_SV_CALL_PENDING != 0
-                interrupt.pended = shcsr_value & CxM3.SHCSR.MASK_SV_CALL_ACTIVE != 0
+                interrupt.pended = shcsr_value & CM3.SHCSR.MASK_SV_CALL_PENDING != 0
+                interrupt.pended = shcsr_value & CM3.SHCSR.MASK_SV_CALL_ACTIVE != 0
 
             elif index == 12:
                 interrupt.enabled = True
                 interrupt.pended = False
-                interrupt.active = shcsr_value & CxM3.SHCSR.MASK_MONITOR_ACTIVE != 0
+                interrupt.active = shcsr_value & CM3.SHCSR.MASK_MONITOR_ACTIVE != 0
 
             elif index == 14:
                 interrupt.enabled = True
-                interrupt.pended = icsr_value & CxM3.ICSR.MASK_PEND_SV_SET != 0
-                interrupt.active = shcsr_value & CxM3.SHCSR.MASK_SV_PEND_ACTIVE != 0
+                interrupt.pended = icsr_value & CM3.ICSR.MASK_PEND_SV_SET != 0
+                interrupt.active = shcsr_value & CM3.SHCSR.MASK_SV_PEND_ACTIVE != 0
 
             elif index == 15:
                 interrupt.enabled = True
-                interrupt.pended = icsr_value & CxM3.ICSR.MASK_PEND_ST_SET != 0
-                interrupt.active = shcsr_value & CxM3.SHCSR.MASK_SYS_TICK_ACTIVE != 0
+                interrupt.pended = icsr_value & CM3.ICSR.MASK_PEND_ST_SET != 0
+                interrupt.active = shcsr_value & CM3.SHCSR.MASK_SYS_TICK_ACTIVE != 0
 
             else:
                 raise Exception("Invalid state")
@@ -177,7 +177,7 @@ class CortexM3DumpTool:
 
 
 def load_plugin(avatar: Avatar, force: bool = False) -> None:
-    if not force and avatar.arch != CxM3:
+    if not force and avatar.arch != CM3:
         raise Exception("Wrong dump tool for this architecture. Ignore this by using the force flag.")
     target: Target
     for name, target in avatar.targets.items():
