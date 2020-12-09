@@ -156,6 +156,11 @@ class ARM_CORTEX_M3(ARM):
         END_ADDRESS = 0xE000E4EF
         FIELD_WIDTH = 1
 
+    class SEPLR(_MultiByteMmioRegister):
+        ADDRESS = 0xE000ED18
+        END_ADDRESS = 0xE000ED23
+        FIELD_WIDTH = 1
+
     class ICSR(_MmioRegister):
         """Interrupt Control and State Register"""
         ADDRESS = 0xE000ED04
@@ -189,6 +194,26 @@ class ARM_CORTEX_M3(ARM):
 
         MASK_BASE = 0x01 << 29
         MASK_OFFSET = 0x1FFFFF80
+
+    class AIRCR(_MmioRegister):
+        """Application Interrupt and Reset Control Register"""
+        ADDRESS = 0xE000ED0C
+
+        SHIFT_VECT_KEY = 16
+        MASK_VECT_KEY = 0b1111111111111111 << SHIFT_VECT_KEY
+
+        MASK_ENDIANESS = 1 << 15
+
+        SHIFT_PRI_GROUP = 8
+        MASK_PRI_GROUP = 0b111 << SHIFT_PRI_GROUP
+
+        MASK_SYS_RESET_REQ = 1 << 2
+        MASK_VECT_CLR_ACTIVE = 1 << 1
+        MASK_VECT_RESET = 1 << 0
+
+        @classmethod
+        def read_pri_group(cls, target):
+            return (cls.read(target) & cls.MASK_PRI_GROUP) >> cls.SHIFT_PRI_GROUP
 
     class SHCSR(_MmioRegister):
         """System Handler Control and State Register"""
