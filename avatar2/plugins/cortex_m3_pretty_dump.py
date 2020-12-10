@@ -2,8 +2,6 @@ from typing import List
 
 from avatar2 import Avatar, Target, ARM_CORTEX_M3 as CM3
 
-NUM_SYS_INTERRUPTS = 16
-
 REGISTERS_ON_STACK = [
     'r0', 'r1', 'r2', 'r3', 'r12', 'lr', 'pc', 'psr'
 ]
@@ -40,12 +38,12 @@ def insert_character_at(string, index):
     return string[:index] + "|" + string[index:]
 
 
-def _interrupt_to_string(interrupt):
+def _interrupt_to_string(interrupt, prio_group_number):
     if interrupt.priority < 0:
         pri_str = " %d " % interrupt.priority
     else:
         pri_str = "{0:08b}".format(interrupt.priority)
-        pri_str = insert_character_at(pri_str, 7 - interrupt.priority)
+        pri_str = insert_character_at(pri_str, 7 - prio_group_number)
     result = "%5s, %10s, %10s, %16s, %3s, %3s, %3s, %8s" % (
         "%d" % interrupt.id,
         "0x%08X" % interrupt.vt_address,
@@ -58,11 +56,11 @@ def _interrupt_to_string(interrupt):
     return result
 
 
-def pretty_print_interrupts(interrupts):
+def pretty_print_interrupts(interrupts, prio_group_number):
     #      12345, 123456789a, 123456789a, 123456789abcdef0, 123, 123, 123, 12345678
     print("index, vt-entry  , handler   , Name            , Ena, Pnd, Act, Priority")
     for interrupt in interrupts:
-        print(_interrupt_to_string(interrupt))
+        print(_interrupt_to_string(interrupt, prio_group_number))
 
 
 class CortexM3DumpTool:
@@ -81,7 +79,7 @@ class CortexM3DumpTool:
         target = self._target
         ictr_value = CM3.ICTR.read(target)
         # 16 internal (system) interrupts and an increment of 32 external interrupts
-        max_vt_entries = NUM_SYS_INTERRUPTS + 32 * (1 + ictr_value)
+        max_vt_entries = CM3.AMOUNT_OF_EXCEPTIONS + 32 * (1 + ictr_value)
         target.log.info("Maximum number of interrupts = %d (0x%X)" % (max_vt_entries, max_vt_entries))
 
         prio_group_number = CM3.AIRCR.read_pri_group(target)
@@ -107,7 +105,7 @@ class CortexM3DumpTool:
                 current = self.parse_external_interrupt(i - 16, current)
             interrupts.append(current)
 
-        pretty_print_interrupts(interrupts)
+        pretty_print_interrupts(interrupts, prio_group_number)
 
     def parse_external_interrupt(self, index, interrupt):
         interrupt.name = "Interrupt %04d" % index
@@ -119,7 +117,7 @@ class CortexM3DumpTool:
 
     def parse_system_interrupt(self, index: int, interrupt: Interrupt, icsr_value: int, shcsr_value: int):
         interrupt.name = SYSTEM_INTERRUPTS[index]
-        if index < 0 or index >= NUM_SYS_INTERRUPTS:
+        if index < 0 or index >= CM3.AMOUNT_OF_EXCEPTIONS:
             raise Exception("Not a system exception.")
 
         elif index in [0, 7, 8, 9, 10, 13]:
@@ -174,6 +172,23 @@ class CortexM3DumpTool:
                 raise Exception("Invalid state")
 
         return interrupt
+
+    def dump_hard_fault(self):
+        hfsr_value = CM3.HFSR.read(self._target)
+        hf_forced = hfsr_value & CM3.HFSR.MASK_FORCED != 0
+        hf_table = hfsr_value & CM3.HFSR.MASK_TABLE != 0
+
+        print("Hard Fault was\n\tForced? %s\n\tTable? %s" % (hf_forced, hf_table))
+
+    def dump_memory_fault(self):
+        cfsr_value = CM3.CFSR.read(self._target)
+        print("{:>032b}".format(cfsr_value))
+        #     '00000000000000000000001101101100'
+        print("        MMF still valid ┘  ││ ││")
+        print("               Stack error ┘│ ││")
+        print("              Unstack error ┘ ││")
+        print("               Data Violation ┘│")
+        print("         Instruction Violation ┘")
 
 
 def load_plugin(avatar: Avatar, force: bool = False) -> None:
