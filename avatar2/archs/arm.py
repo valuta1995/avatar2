@@ -54,6 +54,10 @@ class ARM_CORTEX_M3(ARM):
     unicorn_mode = UC_MODE_LITTLE_ENDIAN | UC_MODE_THUMB
     sr_name = 'xpsr'
 
+    AMOUNT_OF_EXCEPTIONS = 16
+    PERIPHERALS_START = 0xE0000000
+    PERIPHERALS_END = 0xE0100000
+
     class _MmioRegister:
         """Offer basic functionality to easily .read or .write a memory mapped register"""
 
@@ -129,6 +133,10 @@ class ARM_CORTEX_M3(ARM):
         ADDRESS = 0xE000E004
 
         MASK_INT_LINES_NUM = 0xF
+
+        @classmethod
+        def read_interrupts(cls, target):
+            return 32 * (1 + (cls.MASK_INT_LINES_NUM & cls.read(target)))
 
     class ExtIntSETENRegs(_MultiBitMmioRegister):
         ADDRESS = 0XE000E100
