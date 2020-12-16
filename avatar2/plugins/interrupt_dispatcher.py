@@ -4,20 +4,91 @@ from avatar2 import Target, Avatar, ARM_CORTEX_M3, BreakpointHitMessage
 
 # A small ASM snippet that reflects an intercepted IRQ back on track
 CALLBACK_TYPE = Callable[[Target], bool]
-ASM_IRQ_MIRROR = (
-    ".thumb\n"
-    "Avatar2Trampoline:\n"
-    "LDR    R2, =0x%X\n"  # Inject ICSR
-    "LDR    R2, [R2]\n"  # Get the value from the ICSR
-    "LDR    R3, =0x%X\n"  # Inject ICSR's mask for active vector
-    "AND    R2, R2, R3\n"  # Mask the value from ICSR
-    "LSL    R2, R2, #%d\n"  # Correct for word size 0: 1-byte, 1: 2-byte, 2: 4-byte
-    "LDR    R3, =0x%X\n"  # Inject OG VT address
-    "LDR    R1, [R3, R2]\n"  # Get the start of the OG handler
 
-    "BKPT\n"
-    "BX     R1\n"
+# After ASM_IRQ_MIRROR_HEAD
+# R0 := original_handler_address
+# R1 := mpu_cr_address
+# R2 := mpu_enable_flag
+#
+# Injection order
+#   ICSR.ADDRESS
+#   ICSR.MASK_VECT_ACTIVE
+#   size_number
+#   vt_address
+#   MpuCR.ADDRESS
+#   MpuCR disable flag
+#   MpuCR enable flag
+ASM_IRQ_MIRROR_HEAD = (
+    "Avatar2Trampoline:\n"
+    # Load R1 = ICSR_ADDR (inject address of reg with active interrupt)
+    "LDR    R1, =0x%X\n"
+    # Load R1 = *R1 (icsr_value = *ICSR_ADDR)
+    "LDR    R1, [R1]\n"
+
+    # Load R0 = ICSR_ACTIVE_MASK (inject the mask for which bytes signal an active interrupt)
+    "LDR    R0, =0x%X\n"
+
+    # Mask R1 = R1 & R0 (active_irq_no = icsr_value & ICSR_ACTIVE_MASK)
+    "AND    R1, R1, R0\n"
+    # Shift R1 = R1 << ptr_size (injected size of vtable_entries 0: 1-byte, 1: 2-byte, 2: 4-byte)
+    "LSL    R1, R1, #%d\n"
+
+    # Load R0 = VTABLE_ADDR (injected vtable address)
+    "LDR    R0, =0x%X\n"
+    # Load R0 = R0[R1] (handler_fn_ptr = vtable[offset])
+    "LDR    R0, [R0, R1]\n"
+
+    "Avatar2DisableMPU:\n"
+    "DMB    sy\n"
+    # Load R0 = MPU_CR_ADDR (injected MpuCR address)
+    "LDR    R1, =0x%X\n"
+    # Load R2 = MPU_DISABLE_FLAG (injected disable flag)
+    "LDR    R2, =0x%X\n"
+    # Disable the MPU
+    "STR    R2, [R1]\n"
+    # Load R2 = MPU_ENABLE_FLAG (injected enable_flag)
+    "LDR    R2, =0x%X\n"
 )
+
+ASM_IRQ_MIRROR_TAIL = (
+    "BKPT\n"
+    "NOP\n"
+    "NOP\n"
+    "NOP\n"  
+    
+    "Avatar2EnableMPU:\n"
+    "DSB    sy\n"
+    "ISB    sy\n"
+    "STR    R2, [R1]\n"
+    "BX     R0\n"
+)
+
+ASM_IRQ_MIRROR_TAIL_ALT = (
+    "BKPT\n"
+    "%s\n"
+    "%s\n"
+    "%s\n"  
+    
+    "Avatar2EnableMPU:\n"
+    "DSB    sy\n"
+    "ISB    sy\n"
+    "STR    R2, [R1]\n"
+    "BX     R0\n"
+)
+
+ASM_IRQ_MIRROR_NOP = (
+    "NOP\n"
+    "NOP\n"
+    "NOP\n"
+    "NOP\n"
+    "NOP\n"
+    "NOP\n"
+    "NOP\n"
+    "NOP\n"
+)
+
+ASM_IRQ_MIRROR = ASM_IRQ_MIRROR_HEAD + ASM_IRQ_MIRROR_TAIL + ASM_IRQ_MIRROR_NOP
+
 # TODO this only works for IR handlers that do not need access to the stack (corrupt LR?)
 # ICSR.ADDRESS, ICSR.MASK_VECT_ACTIVE, 2, OG result of VTOR.read(), MpuCR, 0x0
 ASM_FREE_IRQ_MIRROR = (
@@ -37,7 +108,11 @@ ASM_FREE_IRQ_MIRROR = (
     "STR    R2, [R3]\n"  # Disable the MPU
 
     "BKPT\n"
+    "DSB    sy\n"
+    "ISB    sy\n"
+    "NOP\n"
     "BLX    R1\n"  # Run the OG handler
+    "NOP\n"
 
     "LDR    R2, =0x%X\n"  # Inject MPU enable flag
     "STR    R2, [R3]\n"  # Enable the MPU
@@ -48,7 +123,10 @@ ASM_FREE_IRQ_MIRROR = (
 )
 
 
-def build_irq_mirror_asm_string(icsr_address: int, icsr_active_mask: int, entry_size: int, vtor_address: int):
+def build_irq_mirror_asm_string(
+        icsr_address: int, icsr_active_mask: int, entry_size: int, vtor_address: int,
+        mpu_address: int, mpu_disable_value: int, mpu_enable_value: int
+):
     if entry_size == 1:
         size_num = 0
     elif entry_size == 2:
@@ -64,6 +142,9 @@ def build_irq_mirror_asm_string(icsr_address: int, icsr_active_mask: int, entry_
         icsr_active_mask,
         size_num,
         vtor_address,
+        mpu_address,
+        mpu_disable_value,
+        mpu_enable_value,
     )
 
 
@@ -285,12 +366,7 @@ class InterruptDispatcher:
         return substitute_vt_address, vt_aligned_size
 
     def _inject_interrupt_handler(self):
-        if hasattr(self._arch, 'ICSR'):
-            icsr_addr = self._arch.ICSR.ADDRESS
-            icsr_mask = self._arch.ICSR.MASK_VECT_ACTIVE
-            asm_string = build_irq_mirror_asm_string(icsr_addr, icsr_mask, 4, self._og_vt_addr)
-        else:
-            raise Exception("Architecture has no info on ICSR register. Failed to inject interrupt handler")
+        asm_string = self.get_formatted_asm()
 
         if hasattr(self._target, 'assemble') and hasattr(self._target, 'inject_asm'):
             raw_bytes = self._target.assemble(asm_string, addr=self._memory_range_free)
@@ -306,13 +382,24 @@ class InterruptDispatcher:
 
         return handler_address, num_bytes
 
-    def _re_inject_interrupt_handler(self):
-        if hasattr(self._arch, 'ICSR'):
+    def get_formatted_asm(self):
+        if hasattr(self._arch, 'ICSR') and hasattr(self._arch, 'MpuCR'):
             icsr_addr = self._arch.ICSR.ADDRESS
             icsr_mask = self._arch.ICSR.MASK_VECT_ACTIVE
-            asm_string = build_irq_mirror_asm_string(icsr_addr, icsr_mask, 4, self._og_vt_addr)
+
+            mpu_address = self._arch.MpuCR.ADDRESS
+            mpu_disable_value = 0
+            mpu_enable_value = self._arch.MpuCR.MASK_PRIV_DEF_ENA | self._arch.MpuCR.MASK_ENABLE
+            asm_string = build_irq_mirror_asm_string(
+                icsr_addr, icsr_mask, 4, self._og_vt_addr,
+                mpu_address, mpu_disable_value, mpu_enable_value
+            )
         else:
             raise Exception("Architecture has no info on ICSR register. Failed to inject interrupt handler")
+        return asm_string
+
+    def _re_inject_interrupt_handler(self):
+        asm_string = self.get_formatted_asm()
 
         if hasattr(self._target, 'inject_asm'):
             success = self._target.inject_asm(asm_string, addr=self._substitute_handler_addr)
@@ -322,7 +409,12 @@ class InterruptDispatcher:
             raise Exception("Assembler is not available, please avatar.load_plugin('assembler').")
 
     def on_handler_hit(self):
-        vt_offset = self._target.read_register('r2')
+        if hasattr(self._arch, 'ICSR'):
+            vector_id = self._arch.ICSR.read_active_vector(self._target)
+        else:
+            self._target.log.warn("No ICSR-like register cannot determine original vector")
+            vector_id = 0
+        vt_offset = vector_id * 4
 
         if vt_offset not in self._registered_vectors:
             self._target.log.warn("A handler was hit (0x%X) even though it seems to not be registered." % vt_offset)
