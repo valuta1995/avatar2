@@ -1,4 +1,5 @@
 # from capstone import CS_ARCH_ARM, CS_MODE_LITTLE_ENDIAN, CS_MODE_BIG_ENDIAN
+import math
 from typing import Union
 
 from capstone import *
@@ -74,6 +75,7 @@ class ARM_CORTEX_M3(ARM):
                 return target.write_memory(cls.ADDRESS, size, value=value, num_words=num_words)
             else:
                 raise NotImplementedError("Class does not have an ADDRESS")
+
 
     class _MultiBitMmioRegister(_MmioRegister):
         """Allow for bitwise-indexed access to registers that span multiple words"""
@@ -355,7 +357,8 @@ class ARM_CORTEX_M3(ARM):
 
         @staticmethod
         def calculate_size_value(size: int) -> int:
-            pass
+            next_power = 1 << (size - 1).bit_length()
+            return int(math.log2(next_power)) - 1
 
         @staticmethod
         def calculate_access_permission(priv_read: bool, priv_write: bool, user_read: bool, user_write: bool, ) -> int:
