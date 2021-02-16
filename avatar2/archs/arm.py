@@ -76,6 +76,15 @@ class ARM_CORTEX_M3(ARM):
             else:
                 raise NotImplementedError("Class does not have an ADDRESS")
 
+        @classmethod
+        def set_bit(cls, target, bit_index, value):
+            og_value = cls.read(target)
+
+            if value == 0:
+                cls.write(target, og_value & ~(1 << bit_index))
+            elif value == 1:
+                cls.write(target, og_value | 1 << bit_index)
+
 
     class _MultiBitMmioRegister(_MmioRegister):
         """Allow for bitwise-indexed access to registers that span multiple words"""

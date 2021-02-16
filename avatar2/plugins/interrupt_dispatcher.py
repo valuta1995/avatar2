@@ -256,6 +256,8 @@ class InterruptDispatcher:
         current_pc = self._target.read_register('pc')
         if self._substitute_handler_addr <= current_pc <= self._substitute_handler_addr + self._substitute_handler_size:
             self.on_handler_hit()
+        else:
+            self._target.log.warn("Hit a breakpoint but nothing happened.")
 
     def _inject_handler_into_vt(self, vt_offset):
         vt_entry_addr = self._substitute_vt_addr + vt_offset
