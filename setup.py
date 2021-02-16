@@ -4,7 +4,7 @@ from sys import version_info
 
 setup(
     name='avatar2',
-    version='1.4.0',
+    version='1.3.1',
     packages=['avatar2',
               'avatar2/archs',
               'avatar2/targets',
@@ -30,7 +30,6 @@ setup(
         'pylink-square',
         'pyusb',
     ],
-    include_package_data=True,
     url='https://github.com/avatartwo/avatar2',
     description='A Dynamic Multi-Target Orchestration Framework',
     maintainer='Marius Muench',
