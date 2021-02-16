@@ -63,17 +63,100 @@ def pretty_print_interrupts(interrupts, prio_group_number):
         print(_interrupt_to_string(interrupt, prio_group_number))
 
 
+def _print_stack_content(sp_value, offset, target):
+    values_on_stack = target.read_memory(sp_value + offset, 4, 8)
+    faulting_context = {REGISTERS_ON_STACK[i]: values_on_stack[i] for i in range(len(REGISTERS_ON_STACK))}
+    for key, value in faulting_context.items():
+        print("%4s: %10s" % (key, "0x%X" % value))
+
+
 class CortexM3DumpTool:
 
     def __init__(self, target: Target):
         self._target = target
 
+    def dump_all_fault(self):
+        print("R0: 0x%X" % self._target.read_register('r0'))
+        print("R1: 0x%X" % self._target.read_register('r1'))
+        print("R2: 0x%X" % self._target.read_register('r2'))
+        print("R3: 0x%X" % self._target.read_register('r3'))
+        print("R4: 0x%X" % self._target.read_register('r4'))
+        print("R5: 0x%X" % self._target.read_register('r5'))
+        print("R6: 0x%X" % self._target.read_register('r6'))
+        print("R7: 0x%X" % self._target.read_register('r7'))
+        print("R8: 0x%X" % self._target.read_register('r8'))
+        print("R9: 0x%X" % self._target.read_register('r9'))
+        print("R10: 0x%X" % self._target.read_register('r10'))
+        print("R11: 0x%X" % self._target.read_register('r11'))
+        print("R12: 0x%X" % self._target.read_register('r12'))
+        print("SP: 0x%X" % self._target.read_register('sp'))
+        print("LR: 0x%X" % self._target.read_register('lr'))
+        print("PC: 0x%X" % self._target.read_register('pc'))
+        print("PSP: 0x%X" % self._target.read_register('psp'))
+        print("MSP: 0x%X" % self._target.read_register('msp'))
+
+        psr_value = self._target.read_register('xPSR')
+        print("┌─Negative flag")
+        print("│┌─Zero flag")
+        print("││┌─Carry flag")
+        print("│││┌─Overflow flag")
+        print("││││┌─Saturation flag")
+        #     '10101010101010101010101010101010'
+        print("{:>032b}".format(psr_value))
+        #     '10101010101010101010101010101010'
+        print("ICI: ^^│        ^^^^^^││││││││││")
+        print("Thumb: ^              ││││││││││")
+        print("                 ISR: ^^^^^^^^^^")
+        
+        primask_value = self._target.read_register('primask')
+        print("Primask is " + ("active" if primask_value != 0 else "inactive"))
+        
+        faultmask_value = self._target.read_register('faultmask')
+        print("faultmask is " + ("active" if faultmask_value != 0 else "inactive"))
+
+        basepri_value = self._target.read_register("basepri")
+        print("basepri = %d" % basepri_value)
+
+        control_value = self._target.read_register("control")
+        spsel = "msp" if (control_value & 0b10) == 0 else "psp"
+        npriv = "priv" if (control_value & 0b01) == 0 else "unpriv"
+        print("Control = %s, %s" % (spsel, npriv))
+
+        cfsr_value = CM3.CFSR.read(self._target)
+        print("      ┌─Divide by zero")
+        print("      │┌─Unaligned memory access")
+        print("      ││    ┌─No co-processor")
+        print("      ││    │┌─Invalid PC on exception return")
+        print("      ││    ││┌─Invalid state")
+        print("      ││    │││┌─Undefined instruction")
+        #     '10101010101010101010101010101010'
+        print("{:>032b}".format(cfsr_value))
+        #     '10101010101010101010101010101010'
+        print(" BF still valid─┘  ││││││  ││ ││")
+        print("       Stack error─┘│││││  ││ ││")
+        print("      Unstack error─┘││││  ││ ││")
+        print("     Imprecise error─┘│││  ││ ││")
+        print("        Precise error─┘││  ││ ││")
+        print(" Instruction bus error─┘│  ││ ││")
+        print("                        │  ││ ││")
+        print("        MMF still valid─┘  ││ ││")
+        print("               Stack error─┘│ ││")
+        print("              Unstack error─┘ ││")
+        print("               Data Violation─┘│")
+        print("         Instruction Violation─┘")
+
     def dump_stack(self, offset: int = 0):
         target = self._target
-        values_on_stack = target.read_memory(target.read_register("sp") + offset, 4, 8)
-        faulting_context = {REGISTERS_ON_STACK[i]: values_on_stack[i] for i in range(len(REGISTERS_ON_STACK))}
-        for key, value in faulting_context.items():
-            print("%4s: %10s" % (key, "0x%X" % value))
+
+        cr_value = target.read_register("control")
+        psp_selector = (cr_value & 0b10) != 0
+        msp_value = target.read_register("msp")
+        psp_value = target.read_register("psp")
+
+        print("Values on msp stack%s:" % (" (currently selected)" if not psp_selector else ""))
+        _print_stack_content(msp_value, offset, target)
+        print("Values on psp stack%s:" % (" (currently selected)" if psp_selector else ""))
+        _print_stack_content(psp_value, offset, target)
 
     def dump_nvic_info(self):
         target = self._target
@@ -189,6 +272,9 @@ class CortexM3DumpTool:
         print("              Unstack error ┘ ││")
         print("               Data Violation ┘│")
         print("         Instruction Violation ┘")
+
+        mmfar_value = CM3.MMFAR.read(self._target)
+        print("MMFAR: 0x%8X" % mmfar_value)
 
 
 def load_plugin(avatar: Avatar, force: bool = False) -> None:
