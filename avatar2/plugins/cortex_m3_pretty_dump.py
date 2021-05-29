@@ -2,9 +2,9 @@ from typing import List
 
 from avatar2 import Avatar, Target, ARM_CORTEX_M3 as CM3
 
-REGISTERS_ON_STACK = [
-    'r0', 'r1', 'r2', 'r3', 'r12', 'lr', 'pc', 'psr'
-]
+# REGISTERS_ON_STACK = [
+#     'r0', 'r1', 'r2', 'r3', 'r12', 'lr', 'pc', 'psr'
+# ]
 SYSTEM_INTERRUPTS = [
     'MSP init addr', 'Reset', 'NMI', 'Hard fault',  # Unconfigurable system interrupts
     'MemManage fault', 'Bus fault', 'Usage fault',  # Configurable system interrupts
@@ -65,7 +65,8 @@ def pretty_print_interrupts(interrupts, prio_group_number):
 
 def _print_stack_content(sp_value, offset, target):
     values_on_stack = target.read_memory(sp_value + offset, 4, 8)
-    faulting_context = {REGISTERS_ON_STACK[i]: values_on_stack[i] for i in range(len(REGISTERS_ON_STACK))}
+    regs_on_stack = target.avatar.arch.REGISTERS_ON_STACK
+    faulting_context = {regs_on_stack[i]: values_on_stack[i] for i in range(len(regs_on_stack))}
     for key, value in faulting_context.items():
         print("%4s: %10s" % (key, "0x%X" % value))
 
@@ -148,15 +149,24 @@ class CortexM3DumpTool:
     def dump_stack(self, offset: int = 0):
         target = self._target
 
-        cr_value = target.read_register("control")
-        psp_selector = (cr_value & 0b10) != 0
+        lr_value = target.read_register('lr')
+        fp_on = 0 == (lr_value & 0b10000)
+        handler_mode = 0 == (lr_value & 0b1000)
+        msp_active = 0 == (lr_value & 0b100)
+
         msp_value = target.read_register("msp")
         psp_value = target.read_register("psp")
 
-        print("Values on msp stack%s:" % (" (currently selected)" if not psp_selector else ""))
+        print("Curretly selected is determined by the CONTROL register.")
+        print("Look at the LR register to find out which was in use at fault time. ...FFD == psp.")
+        print("Values on msp stack%s:" % (" (currently selected)" if msp_active else ""))
         _print_stack_content(msp_value, offset, target)
-        print("Values on psp stack%s:" % (" (currently selected)" if psp_selector else ""))
+        print("Values on psp stack%s:" % (" (currently selected)" if not msp_active else ""))
         _print_stack_content(psp_value, offset, target)
+        print("Note that the FP state is '%s', and mode is '%s'" % (
+            "on" if fp_on else "off",
+            "handler" if handler_mode else "thread"
+        ))
 
     def dump_nvic_info(self):
         target = self._target
