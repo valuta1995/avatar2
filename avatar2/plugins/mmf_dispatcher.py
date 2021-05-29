@@ -115,7 +115,7 @@ class MemFaultDispatcher:
             return hf_was_forced and mmf_flags and not mmf_pended
 
         else:
-            raise Exception("We should not be in this situation at all...")
+            raise Exception("We should not be in this situation at all... (vt_offset is 0x%X)" % vt_entry_offset)
 
     def _unset_breakpoint(self, bp_id: int):
         if bp_id == -1:
@@ -143,12 +143,16 @@ class MemFaultDispatcher:
         if hf_handler_addr != self._hf_handler_addr:
             self._target.log.info("Hard-fault handler address changed. Updating HF handler breakpoint.")
             self._unset_breakpoint(self._vt_hf_bp_id)
-            self._vt_hf_bp_id = self._target.set_breakpoint(hf_handler_addr & ~1)
+            thumbed = hf_handler_addr & ~1
+            self._vt_hf_bp_id = self._target.set_breakpoint(thumbed)
+            print("\tHF handler is at 0x%X" % thumbed)
 
         if mmf_handler_addr != self._mmf_handler_addr:
             self._target.log.info("Memory-management-fault handler address changed. Updating MMF handler breakpoint.")
-            self._vt_mmf_bp_id = self._target.set_breakpoint(mmf_handler_addr & ~1)
             self._unset_breakpoint(self._vt_mmf_bp_id)
+            thumbed = mmf_handler_addr & ~1
+            self._vt_mmf_bp_id = self._target.set_breakpoint(thumbed)
+            print("\tMMF handler is at 0x%X" % thumbed)
 
 
 def load_plugin(avatar: Avatar) -> None:

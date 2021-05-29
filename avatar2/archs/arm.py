@@ -59,6 +59,8 @@ class ARM_CORTEX_M3(ARM):
     PERIPHERALS_START = 0xE0000000
     PERIPHERALS_END = 0xE0100000
 
+    REGISTERS_ON_STACK = ['r0', 'r1', 'r2', 'r3', 'r12', 'lr', 'pc', 'psr']
+
     class _MmioRegister:
         """Offer basic functionality to easily .read or .write a memory mapped register"""
 
