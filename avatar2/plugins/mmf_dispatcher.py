@@ -77,6 +77,7 @@ class MemFaultDispatcher:
         elif bp_id in [self._vt_hf_bp_id, self._vt_mmf_bp_id]:
             self._target.log.info("HF or MMF breakpoint triggered by 0x%X." % bp_addr)
             if self._check_if_mmf():
+                self.count_skipped_breakpoints = 0
                 self._trigger_dispatch()
             else:
                 self.count_skipped_breakpoints += 1
