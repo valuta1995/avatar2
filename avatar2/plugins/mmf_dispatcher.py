@@ -44,6 +44,8 @@ class MemFaultDispatcher:
         self._vt_mmf_bp_id = -1
         self._vt_mmf_wp_id = -1
 
+        self.count_skipped_breakpoints = 0
+
         # This will be done in late init (after the target has initialized)
         # TODO bind this to target init events with watchmen.
         # self._ensure_vt_consistency()
@@ -76,6 +78,8 @@ class MemFaultDispatcher:
             self._target.log.info("HF or MMF breakpoint triggered by 0x%X." % bp_addr)
             if self._check_if_mmf():
                 self._trigger_dispatch()
+            else:
+                self.count_skipped_breakpoints += 1
 
         elif bp_id == -1:
             self._target.log.warn("BP id == -1, assuming VTOR/Entry may have been edited by 0x%X." % bp_addr)
